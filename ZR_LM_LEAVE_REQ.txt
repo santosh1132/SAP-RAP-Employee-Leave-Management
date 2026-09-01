@@ -1,29 +1,114 @@
-@AccessControl.authorizationCheck: #CHECK
-@EndUserText.label: '##GENERATED ZLM_LEAVE_REQ'
-define root view entity ZR_LM_LEAVE_REQ
-  as select from zlm_leave_req
+managed implementation in class ZBP_R_LM_LEAVE_REQ unique;
+strict ( 2 );
+with draft;
+
+define behavior for ZR_LM_LEAVE_REQ
+persistent table zlm_leave_req
+draft table ZLM_LEAVE_REQ_D
+etag master LocalLastChangedAt
+lock master total etag LastChangedAt
+authorization master ( global )
 {
-  key leave_id as LeaveID,
-  emp_id as EmpID,
-  leave_type as LeaveType,
-  from_date as FromDate,
-  to_date as ToDate,
-  nof_days as NofDays,
-  reason as Reason,
-  status as Status,
-  created_at as CreatedAt,
-  approved_by as ApprovedBy,
-  approved_at as ApprovedAt,
-  manager_comment as ManagerComment,
-  @Semantics.systemDateTime.createdAt: true
-  ls_created_at as LsCreatedAt,
-  @Semantics.user.createdBy: true
-  created_by as CreatedBy,
-  @Semantics.systemDateTime.lastChangedAt: true
-  last_changed_at as LastChangedAt,
-  @Semantics.user.lastChangedBy: true
-  last_changed_by as LastChangedBy,
-  @Semantics.systemDateTime.localInstanceLastChangedAt: true
-  local_last_changed_at as LocalLastChangedAt
-  
+
+  field ( mandatory : create )
+    LeaveID;
+
+  field ( readonly )
+    Status,
+    LsCreatedAt,
+    CreatedBy,
+    LastChangedAt,
+    LastChangedBy,
+    LocalLastChangedAt;
+
+  field ( readonly : update )
+    LeaveID;
+
+
+  create;
+  update;
+  delete;
+
+
+  action approve result [1] $self;
+  action reject  result [1] $self;
+
+
+  validation validate_dates
+    on save
+    {
+      field FromDate,
+            ToDate;
+    }
+
+
+  validation validate_employee
+    on save
+    {
+      field EmpID;
+    }
+
+
+  validation validate_balance
+    on save
+    {
+      field EmpID,
+            LeaveType,
+            NofDays;
+    }
+
+
+  validation validate_overlap
+    on save
+    {
+      field EmpID,
+            FromDate,
+            ToDate;
+    }
+
+
+  determination calculate_days
+    on modify
+    {
+      create;
+      field FromDate,
+            ToDate;
+    }
+
+
+  determination set_status
+    on modify
+    {
+      create;
+    }
+
+
+  draft action Edit;
+  draft action Activate optimized;
+  draft action Discard;
+  draft action Resume;
+  draft determine action Prepare;
+
+
+  mapping for ZLM_LEAVE_REQ
+  {
+    LeaveID            = leave_id;
+    EmpID              = emp_id;
+    LeaveType          = leave_type;
+    FromDate           = from_date;
+    ToDate             = to_date;
+    NofDays            = nof_days;
+    Reason             = reason;
+    Status              = status;
+    CreatedAt           = created_at;
+    ApprovedBy          = approved_by;
+    ApprovedAt          = approved_at;
+    ManagerComment      = manager_comment;
+    LsCreatedAt         = ls_created_at;
+    CreatedBy           = created_by;
+    LastChangedAt       = last_changed_at;
+    LastChangedBy       = last_changed_by;
+    LocalLastChangedAt  = local_last_changed_at;
+  }
+
 }

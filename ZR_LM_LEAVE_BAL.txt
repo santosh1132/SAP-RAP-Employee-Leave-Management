@@ -1,0 +1,52 @@
+managed implementation in class ZBP_R_LM_LEAVE_BAL unique;
+strict ( 2 );
+with draft;
+
+define behavior for ZR_LM_LEAVE_BAL
+persistent table zlm_leave_bal
+draft table ZLM_LEAVE_BAL_D
+etag master LocalLastChangedAt
+lock master total etag LastChangedAt
+authorization master( global )
+
+{
+  field ( mandatory : create )
+   EmpID,
+   LeaveType;
+
+  field ( readonly )
+   CreatedAt,
+   CreatedBy,
+   LastChangedAt,
+   LastChangedBy,
+   LocalLastChangedAt;
+
+  field ( readonly : update )
+   EmpID,
+   LeaveType;
+
+
+  create;
+  update;
+  delete;
+
+  draft action Edit;
+  draft action Activate optimized;
+  draft action Discard;
+  draft action Resume;
+  draft determine action Prepare;
+
+  mapping for ZLM_LEAVE_BAL
+  {
+    EmpID = emp_id;
+    LeaveType = leave_type;
+    TotalLeaves = total_leaves;
+    UsedLeaves = used_leaves;
+    Balance = balance;
+    CreatedAt = created_at;
+    CreatedBy = created_by;
+    LastChangedAt = last_changed_at;
+    LastChangedBy = last_changed_by;
+    LocalLastChangedAt = local_last_changed_at;
+  }
+}

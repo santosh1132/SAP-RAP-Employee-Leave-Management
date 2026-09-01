@@ -1,0 +1,591 @@
+CLASS lhc_zr_lm_leave_req DEFINITION
+  INHERITING FROM cl_abap_behavior_handler.
+
+  PRIVATE SECTION.
+
+    METHODS get_global_authorizations
+      FOR GLOBAL AUTHORIZATION
+      IMPORTING
+        REQUEST requested_authorizations
+          FOR zr_lm_leave_req
+      RESULT result.
+
+    METHODS approve
+      FOR MODIFY
+      IMPORTING
+        keys FOR ACTION zr_lm_leave_req~approve
+      RESULT result.
+
+    METHODS reject
+      FOR MODIFY
+      IMPORTING
+        keys FOR ACTION zr_lm_leave_req~reject
+      RESULT result.
+
+    METHODS validate_dates
+      FOR VALIDATE ON SAVE
+      IMPORTING
+        keys FOR zr_lm_leave_req~validate_dates.
+
+    METHODS validate_employee
+      FOR VALIDATE ON SAVE
+      IMPORTING
+        keys FOR zr_lm_leave_req~validate_employee.
+
+    METHODS validate_balance
+      FOR VALIDATE ON SAVE
+      IMPORTING
+        keys FOR zr_lm_leave_req~validate_balance.
+
+    METHODS validate_overlap
+      FOR VALIDATE ON SAVE
+      IMPORTING
+        keys FOR zr_lm_leave_req~validate_overlap.
+
+    METHODS calculate_days
+      FOR DETERMINE ON MODIFY
+      IMPORTING
+        keys FOR zr_lm_leave_req~calculate_days.
+
+    METHODS set_status
+      FOR DETERMINE ON MODIFY
+      IMPORTING
+        keys FOR zr_lm_leave_req~set_status.
+
+ENDCLASS.
+
+
+CLASS lhc_zr_lm_leave_req IMPLEMENTATION.
+
+
+  METHOD get_global_authorizations.
+
+  ENDMETHOD.
+
+
+  METHOD approve.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      ALL FIELDS
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      "--------------------------------------------------
+      " 1. Check request status
+      "--------------------------------------------------
+      IF ls_leave-Status <> 'P'.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Only pending leave requests can be approved.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " 2. Read leave balance
+      "--------------------------------------------------
+      SELECT SINGLE
+        balance,
+        used_leaves
+        FROM zlm_leave_bal
+        WHERE emp_id     = @ls_leave-EmpID
+          AND leave_type = @ls_leave-LeaveType
+        INTO (@DATA(lv_balance), @DATA(lv_used)).
+
+
+      "--------------------------------------------------
+      " 3. Balance record not found
+      "--------------------------------------------------
+      IF sy-subrc <> 0.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Leave balance record not found.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " 4. Check sufficient balance
+      "--------------------------------------------------
+      IF lv_balance < ls_leave-NofDays.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Insufficient leave balance.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " 5. Calculate new balance and used leaves
+      "--------------------------------------------------
+      DATA(lv_new_balance) =
+        lv_balance - ls_leave-NofDays.
+
+      DATA(lv_new_used) =
+        lv_used + ls_leave-NofDays.
+
+
+      "--------------------------------------------------
+      " 6. Update leave balance
+      "--------------------------------------------------
+      MODIFY ENTITIES OF zr_lm_leave_bal
+        ENTITY zr_lm_leave_bal
+        UPDATE FIELDS ( UsedLeaves Balance )
+        WITH VALUE #(
+          (
+            %key-EmpID     = ls_leave-EmpID
+            %key-LeaveType = ls_leave-LeaveType
+            UsedLeaves     = lv_new_used
+            Balance        = lv_new_balance
+          )
+        )
+        FAILED DATA(lt_bal_failed).
+
+
+      "--------------------------------------------------
+      " 7. Check balance update
+      "--------------------------------------------------
+      IF lt_bal_failed IS NOT INITIAL.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Failed to update leave balance.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " 8. Approve leave request
+      "--------------------------------------------------
+      MODIFY ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+        ENTITY zr_lm_leave_req
+        UPDATE FIELDS ( Status ApprovedBy ApprovedAt )
+        WITH VALUE #(
+          (
+            %tky       = ls_leave-%tky
+            Status     = 'A'
+            ApprovedBy = sy-uname
+            ApprovedAt = utclong_current( )
+          )
+        )
+        FAILED DATA(lt_req_failed).
+
+
+      "--------------------------------------------------
+      " 9. Check request update
+      "--------------------------------------------------
+      IF lt_req_failed IS NOT INITIAL.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Failed to approve leave request.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " 10. Successful result
+      "--------------------------------------------------
+      APPEND VALUE #(
+        %tky = ls_leave-%tky
+      ) TO result.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD reject.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      ALL FIELDS
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      "--------------------------------------------------
+      " Only pending request can be rejected
+      "--------------------------------------------------
+      IF ls_leave-Status <> 'P'.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Only pending leave requests can be rejected.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      "--------------------------------------------------
+      " Reject request
+      " Balance is NOT changed
+      "--------------------------------------------------
+      MODIFY ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+        ENTITY zr_lm_leave_req
+        UPDATE FIELDS ( Status )
+        WITH VALUE #(
+          (
+            %tky   = ls_leave-%tky
+            Status = 'R'
+          )
+        )
+        FAILED DATA(lt_failed).
+
+
+      IF lt_failed IS NOT INITIAL.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Failed to reject leave request.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      APPEND VALUE #(
+        %tky = ls_leave-%tky
+      ) TO result.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD validate_dates.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( FromDate ToDate )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      IF ls_leave-FromDate IS INITIAL
+         OR ls_leave-ToDate IS INITIAL.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'From date and To date are mandatory.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ELSEIF ls_leave-ToDate < ls_leave-FromDate.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'To date cannot be before From date.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD validate_employee.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( EmpID )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      SELECT SINGLE emp_id
+        FROM zlm_employee
+        WHERE emp_id = @ls_leave-EmpID
+        INTO @DATA(lv_emp_id).
+
+      IF sy-subrc <> 0.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Employee does not exist.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD validate_balance.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( EmpID LeaveType NofDays )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      SELECT SINGLE balance
+        FROM zlm_leave_bal
+        WHERE emp_id     = @ls_leave-EmpID
+          AND leave_type = @ls_leave-LeaveType
+        INTO @DATA(lv_balance).
+
+      IF sy-subrc <> 0.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Leave balance record not found.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ELSEIF lv_balance < ls_leave-NofDays.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Insufficient leave balance.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD validate_overlap.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( LeaveID EmpID FromDate ToDate Status )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      IF ls_leave-FromDate IS INITIAL
+         OR ls_leave-ToDate IS INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+
+      SELECT SINGLE leave_id
+        FROM zlm_leave_req
+        WHERE emp_id = @ls_leave-EmpID
+          AND leave_id <> @ls_leave-LeaveID
+          AND status = 'A'
+          AND from_date <= @ls_leave-ToDate
+          AND to_date >= @ls_leave-FromDate
+        INTO @DATA(lv_existing_leave).
+
+
+      IF sy-subrc = 0.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text = 'Overlapping approved leave already exists.'
+          )
+        ) TO reported-zr_lm_leave_req.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+        ) TO failed-zr_lm_leave_req.
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD calculate_days.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( FromDate ToDate )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_lm_leave_req.
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      IF ls_leave-FromDate IS NOT INITIAL
+         AND ls_leave-ToDate IS NOT INITIAL
+         AND ls_leave-ToDate >= ls_leave-FromDate.
+
+        DATA(lv_days) =
+          ls_leave-ToDate - ls_leave-FromDate + 1.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          NofDays = lv_days
+          %control-NofDays = if_abap_behv=>mk-on
+        ) TO lt_update.
+
+      ENDIF.
+
+    ENDLOOP.
+
+
+    IF lt_update IS NOT INITIAL.
+
+      MODIFY ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+        ENTITY zr_lm_leave_req
+        UPDATE FIELDS ( NofDays )
+        WITH lt_update.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD set_status.
+
+    READ ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+      ENTITY zr_lm_leave_req
+      FIELDS ( Status )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_leave).
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_lm_leave_req.
+
+    LOOP AT lt_leave INTO DATA(ls_leave).
+
+      IF ls_leave-Status IS INITIAL.
+
+        APPEND VALUE #(
+          %tky = ls_leave-%tky
+          Status = 'P'
+          %control-Status = if_abap_behv=>mk-on
+        ) TO lt_update.
+
+      ENDIF.
+
+    ENDLOOP.
+
+
+    IF lt_update IS NOT INITIAL.
+
+      MODIFY ENTITIES OF zr_lm_leave_req IN LOCAL MODE
+        ENTITY zr_lm_leave_req
+        UPDATE FIELDS ( Status )
+        WITH lt_update.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+
+ENDCLASS.
