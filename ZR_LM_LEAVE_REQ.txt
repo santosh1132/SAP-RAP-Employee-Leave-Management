@@ -1,0 +1,29 @@
+@AccessControl.authorizationCheck: #CHECK
+@EndUserText.label: '##GENERATED ZLM_LEAVE_REQ'
+define root view entity ZR_LM_LEAVE_REQ
+  as select from zlm_leave_req
+{
+  key leave_id as LeaveID,
+  emp_id as EmpID,
+  leave_type as LeaveType,
+  from_date as FromDate,
+  to_date as ToDate,
+  nof_days as NofDays,
+  reason as Reason,
+  status as Status,
+  created_at as CreatedAt,
+  approved_by as ApprovedBy,
+  approved_at as ApprovedAt,
+  manager_comment as ManagerComment,
+  @Semantics.systemDateTime.createdAt: true
+  ls_created_at as LsCreatedAt,
+  @Semantics.user.createdBy: true
+  created_by as CreatedBy,
+  @Semantics.systemDateTime.lastChangedAt: true
+  last_changed_at as LastChangedAt,
+  @Semantics.user.lastChangedBy: true
+  last_changed_by as LastChangedBy,
+  @Semantics.systemDateTime.localInstanceLastChangedAt: true
+  local_last_changed_at as LocalLastChangedAt
+  
+}

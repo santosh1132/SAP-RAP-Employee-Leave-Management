@@ -1,0 +1,23 @@
+@AccessControl.authorizationCheck: #CHECK
+@Metadata.allowExtensions: true
+@EndUserText.label: 'Projection View for ZR_LM_LEAVE_REQ'
+@ObjectModel.semanticKey: [ 'LeaveID' ]
+define root view entity ZC_LM_LEAVE_REQ
+  provider contract transactional_query
+  as projection on ZR_LM_LEAVE_REQ
+{
+  key LeaveID,
+  EmpID,
+  LeaveType,
+  FromDate,
+  ToDate,
+  NofDays,
+  Reason,
+  Status,
+  CreatedAt,
+  ApprovedBy,
+  ApprovedAt,
+  ManagerComment,
+  LocalLastChangedAt
+  
+}
